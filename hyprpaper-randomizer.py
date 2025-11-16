@@ -307,7 +307,7 @@ def parse_args():
     parser.add_argument("--cache", action="store_true", help="warm cache (classify images) and exit")
     parser.add_argument("--delete-cache", action="store_true", help="remove the cache and exit")
     parser.add_argument("--wallpaper-dir", type=str, help="path to the directory containing wallpapers")
-    parser.add_argument("--max-depth", type=int, default=2, help="maximum depth to follow when scanning directories (default: 2)")
+    parser.add_argument("--max-depth", type=int, default=1, help="maximum depth to follow when scanning directories (default: 2)")
     return parser.parse_args()
 
 
