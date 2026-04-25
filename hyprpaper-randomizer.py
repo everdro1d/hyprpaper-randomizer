@@ -291,7 +291,7 @@ def choose_random_wallpaper(maxdepth=2):
 
 
 def apply_wallpaper(p: Path):
-    subprocess.run(["hyprctl", "hyprpaper", "reload", f",contain:{str(p)}"])
+    subprocess.run(["hyprctl", "hyprpaper", "wallpaper", f",{str(p)},contain"])
 
 
 def append_history_and_trim(path: Path):
@@ -304,7 +304,7 @@ def append_history_and_trim(path: Path):
 def parse_args():
     parser = argparse.ArgumentParser(description="hyprpaper-randomizer")
     parser.add_argument("--back", action="store_true", help="rewind wallpaper using history file")
-    parser.add_argument("--cache", action="store_true", help="warm cache (classify images) and exit")
+    parser.add_argument("--cache", action="store_true", help="update/write cache (classify images) and exit")
     parser.add_argument("--delete-cache", action="store_true", help="remove the cache and exit")
     parser.add_argument("--wallpaper-dir", type=str, help="path to the directory containing wallpapers")
     parser.add_argument("--max-depth", type=int, default=1, help="maximum depth to follow when scanning directories (default: 2)")
