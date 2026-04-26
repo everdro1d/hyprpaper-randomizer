@@ -151,7 +151,7 @@ def back_action():
     prev = history[-2]
     newhist = history[:-1]
     write_history(newhist)
-    subprocess.run(["hyprctl", "hyprpaper", "reload", f",contain:{prev}"])
+    subprocess.run(["hyprctl", "hyprpaper", "wallpaper", f",{prev},contain"])
     print("Loaded previous wallpaper:", prev)
     sys.exit(0)
 
