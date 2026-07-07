@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hyprpaper-randomizer.py  (v3)
+hyprpaper-randomizer.py  (v4)
 
 Multi-cache wallpaper selector for hyprpaper.
 
@@ -19,6 +19,7 @@ Normal usage (requires an active cache):
   --light     — prefer light wallpapers (luminance > midpoint)
   --dark      — prefer dark wallpapers (luminance < midpoint)
   --fit-mode  — change wallpaper fit mode (contain|cover|tile|fill)
+  --use-vertical — choose portrait wallpapers for vertically transformed monitors
 
 Storage layout (~/.cache/hyprpaper-randomizer/):
   active-cache        — text file with the active cache name
@@ -167,13 +168,14 @@ def append_history(path: Path, monitor: str, fit: str):
 
 
 # ---------------------------------------------------------------------------
-# SQLite DB layer (v3 schema)
+# SQLite DB layer (v4 schema)
 # ---------------------------------------------------------------------------
 
-_V3_CREATE = """
+_V4_CREATE = """
 CREATE TABLE IF NOT EXISTS images (
     path      TEXT PRIMARY KEY,
     match     INTEGER,
+    isHorizontal INTEGER,
     width     INTEGER,
     height    INTEGER,
     mtime     INTEGER,
@@ -182,8 +184,9 @@ CREATE TABLE IF NOT EXISTS images (
     luminance REAL
 )
 """
-_V3_IDX_MATCH = "CREATE INDEX IF NOT EXISTS idx_match ON images(match)"
-_V3_IDX_LAST  = "CREATE INDEX IF NOT EXISTS idx_last_seen ON images(last_seen)"
+_V4_IDX_MATCH = "CREATE INDEX IF NOT EXISTS idx_match ON images(match)"
+_V4_IDX_LAST  = "CREATE INDEX IF NOT EXISTS idx_last_seen ON images(last_seen)"
+_V4_IDX_ORIENTATION = "CREATE INDEX IF NOT EXISTS idx_orientation ON images(isHorizontal)"
 
 _LUMINANCE_MIDPOINT = 127.5
 
@@ -194,14 +197,14 @@ def _is_legacy_db(conn):
     return cur.fetchone() is not None
 
 
-def _has_luminance_column(conn):
-    """Return True if the images table already has a luminance column."""
+def _has_column(conn, column: str):
+    """Return True if the images table already has the given column."""
     cur = conn.execute("PRAGMA table_info(images)")
-    return any(row[1] == "luminance" for row in cur.fetchall())
+    return any(row[1] == column for row in cur.fetchall())
 
 
 def open_db(db_path: Path):
-    """Open (or create) a v3 cache DB at db_path.  Migrates legacy and v2 DBs."""
+    """Open (or create) a v4 cache DB at db_path.  Migrates legacy/v2/v3 DBs."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), timeout=5)
     conn.row_factory = sqlite3.Row
@@ -210,14 +213,25 @@ def open_db(db_path: Path):
         conn.execute("DROP TABLE IF EXISTS cache")
         conn.execute("DROP TABLE IF EXISTS images")
         conn.commit()
-    conn.execute(_V3_CREATE)
-    conn.execute(_V3_IDX_MATCH)
-    conn.execute(_V3_IDX_LAST)
+    conn.execute(_V4_CREATE)
+    conn.execute(_V4_IDX_MATCH)
+    conn.execute(_V4_IDX_LAST)
     conn.commit()
     # Migrate v2 → v3: add luminance column if missing.
-    if not _has_luminance_column(conn):
+    if not _has_column(conn, "luminance"):
         conn.execute("ALTER TABLE images ADD COLUMN luminance REAL")
         conn.commit()
+    # Migrate v3 → v4: add image orientation column if missing.
+    if not _has_column(conn, "isHorizontal"):
+        conn.execute("ALTER TABLE images ADD COLUMN isHorizontal INTEGER")
+        conn.execute(
+            "UPDATE images SET isHorizontal = CASE WHEN width > height THEN 1 ELSE 0 END "
+            "WHERE isHorizontal IS NULL"
+        )
+        conn.commit()
+
+    # applies to index not column, needs to be below col check
+    conn.execute(_V4_IDX_ORIENTATION)
     return conn
 
 
@@ -226,20 +240,21 @@ def db_get_by_path(conn, path: str):
     return cur.fetchone()
 
 
-def db_upsert(conn, path: str, match: int, width: int, height: int,
+def db_upsert(conn, path: str, match: int, is_horizontal: int, width: int, height: int,
               mtime: int, size: int, last_seen: int, luminance):
     conn.execute(
-        """INSERT INTO images(path, match, width, height, mtime, size, last_seen, luminance)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """INSERT INTO images(path, match, isHorizontal, width, height, mtime, size, last_seen, luminance)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(path) DO UPDATE SET
                match=excluded.match,
+               isHorizontal=excluded.isHorizontal,
                width=excluded.width,
                height=excluded.height,
                mtime=excluded.mtime,
                size=excluded.size,
                last_seen=excluded.last_seen,
                luminance=excluded.luminance""",
-        (path, match, width, height, mtime, size, last_seen, luminance),
+        (path, match, is_horizontal, width, height, mtime, size, last_seen, luminance),
     )
 
 
@@ -294,13 +309,13 @@ def get_image_dimensions(path: Path):
 
 
 def is_acceptable(w, h):
-    """Return True if the image is landscape (width strictly greater than height).
+    """Return True if the image is non-square (landscape or portrait).
 
     Square images (w == h) are intentionally excluded.
     """
     if not w or not h:
         return False
-    return int(w) > int(h)
+    return int(w) != int(h)
 
 
 def compute_luminance(path: Path):
@@ -398,8 +413,9 @@ def run_cache_update(name: str):
             dims = get_image_dimensions(p)
             w, h = (dims if dims else (0, 0))
             m = 1 if is_acceptable(w, h) else 0
+            is_horizontal = 1 if int(w) > int(h) else 0
             lum = compute_luminance(p) if m else None
-            db_upsert(conn, sp, m, w, h, mtime, size, scan_started_at, lum)
+            db_upsert(conn, sp, m, is_horizontal, w, h, mtime, size, scan_started_at, lum)
             updated += 1
             if m:
                 matched += 1
@@ -433,21 +449,21 @@ def run_cache_update(name: str):
 # Choose next wallpaper from a named cache
 # ---------------------------------------------------------------------------
 
-def choose_wallpaper(name: str, light: bool = False, dark: bool = False):
+def choose_wallpaper(name: str, light: bool = False, dark: bool = False, is_horizontal: bool = True):
     db_path = cache_db_path(name)
     conn = open_db(db_path)
     history_set = set(load_history())
 
     def _query(ignore_history: bool):
         if light:
-            sql = "SELECT path FROM images WHERE match=1 AND luminance > ?"
-            params = (_LUMINANCE_MIDPOINT,)
+            sql = "SELECT path FROM images WHERE match=1 AND isHorizontal=? AND luminance > ?"
+            params = (1 if is_horizontal else 0, _LUMINANCE_MIDPOINT)
         elif dark:
-            sql = "SELECT path FROM images WHERE match=1 AND luminance < ?"
-            params = (_LUMINANCE_MIDPOINT,)
+            sql = "SELECT path FROM images WHERE match=1 AND isHorizontal=? AND luminance < ?"
+            params = (1 if is_horizontal else 0, _LUMINANCE_MIDPOINT)
         else:
-            sql = "SELECT path FROM images WHERE match=1"
-            params = ()
+            sql = "SELECT path FROM images WHERE match=1 AND isHorizontal=?"
+            params = (1 if is_horizontal else 0,)
         rows = conn.execute(sql, params).fetchall()
         if ignore_history:
             return [row[0] for row in rows]
@@ -490,7 +506,7 @@ def apply_wallpaper_to_monitor(p: Path, monitor: str, fit_mode: str = VALID_FIT_
     subprocess.run(["hyprctl", "hyprpaper", "wallpaper", f"{monitor},{str(p)},{fit_mode}"])
 
 
-def get_monitor_names():
+def get_monitor_data():
     try:
         result = subprocess.run(
             ["hyprctl", "monitors", "-j"],
@@ -509,14 +525,24 @@ def get_monitor_names():
     if not isinstance(monitors, list):
         return []
 
-    names = []
+    data = []
     for monitor in monitors:
         if not isinstance(monitor, dict):
             continue
         name = monitor.get("name")
+        transform = monitor.get("transform")
         if isinstance(name, str) and name:
-            names.append(name)
-    return names
+            data.append(
+                {
+                    "name": name,
+                    "transform": int(transform) if isinstance(transform, int) else 0,
+                }
+            )
+    return data
+
+
+def get_monitor_names():
+    return [monitor["name"] for monitor in get_monitor_data()]
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +620,8 @@ def cmd_cache_update(name: str):
 # --cache-switch
 # ---------------------------------------------------------------------------
 
-def cmd_cache_switch(name: str, light: bool = False, dark: bool = False):
+def cmd_cache_switch(name: str, light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_MODES[0],
+                     multi: bool = False, use_vertical: bool = False):
     if load_cache_meta(name) is None:
         print(f"Error: cache '{name}' does not exist.")
         print()
@@ -624,7 +651,7 @@ def cmd_cache_switch(name: str, light: bool = False, dark: bool = False):
         print(f"Cache '{name}' is empty — running update...")
         run_cache_update(name)
 
-    cmd_run(light, dark)
+    cmd_run(light, dark, fit_mode=fit_mode, multi=multi, use_vertical=use_vertical)
     print(f"Switched to cache '{name}'.")
     notify(f"Switched to cache '{name}'.")
 
@@ -668,7 +695,8 @@ def _delete_one_cache(name: str):
 # --cache-cycle
 # ---------------------------------------------------------------------------
 
-def cmd_cache_cycle(light: bool = False, dark: bool = False):
+def cmd_cache_cycle(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_MODES[0],
+                    multi: bool = False, use_vertical: bool = False):
     names = list_cache_names()
     n = len(names)
     active = get_active_cache_name()
@@ -688,13 +716,14 @@ def cmd_cache_cycle(light: bool = False, dark: bool = False):
         new_idx = 0
 
     new_name = names[new_idx]
-    cmd_cache_switch(new_name, light=light, dark=dark)
+    cmd_cache_switch(new_name, light=light, dark=dark, fit_mode=fit_mode, multi=multi, use_vertical=use_vertical)
 
 # ---------------------------------------------------------------------------
 # Normal run
 # ---------------------------------------------------------------------------
 
-def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_MODES[0], multi: bool = False):
+def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_MODES[0], multi: bool = False,
+            use_vertical: bool = False):
     name = get_active_cache_name()
     if name is None:
         msg = "No active cache. Use --cache-init NAME --wallpaper-dir PATH --max-depth INT"
@@ -711,7 +740,7 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
     # If --multi is used, hyprpaper no longer allows empty mon fallback
     # so we must explicitly set the wallpaper to the monitor. Rather than
     # track whether --multi was used, just set with monitor every time.
-    monitors = get_monitor_names()
+    monitors = get_monitor_data()
     if not monitors:
         msg = "Unable to discover monitors (hyprctl monitors -j)."
         print(msg)
@@ -719,11 +748,17 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
         sys.exit(1)
 
     applied = []
-    for monitor in monitors:
+    for monitor_data in monitors:
+        monitor = monitor_data["name"]
+        transform = monitor_data.get("transform", 0)
+        use_horizontal = True
+        if use_vertical:
+            use_horizontal = transform in (0, 2)
         if multi:
-            choice = choose_wallpaper(name, light=light, dark=dark)
+            choice = choose_wallpaper(name, light=light, dark=dark, is_horizontal=use_horizontal)
             if choice is None:
-                msg = f"No acceptable wallpapers in cache '{name}'. Try --cache-update {name}."
+                orientation = "horizontal" if use_horizontal else "vertical"
+                msg = f"No acceptable {orientation} wallpapers in cache '{name}'. Try --cache-update {name}."
                 print(msg)
                 notify(msg)
                 sys.exit(1)
@@ -731,9 +766,10 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
             append_history(choice, monitor, fit_mode)
             applied.append((monitor, choice))
         else:
-            choice = choose_wallpaper(name, light=light, dark=dark)
+            choice = choose_wallpaper(name, light=light, dark=dark, is_horizontal=use_horizontal)
             if choice is None:
-                msg = f"No acceptable wallpapers in cache '{name}'. Try --cache-update {name}."
+                orientation = "horizontal" if use_horizontal else "vertical"
+                msg = f"No acceptable {orientation} wallpapers in cache '{name}'. Try --cache-update {name}."
                 print(msg)
                 notify(msg)
                 sys.exit(1)
@@ -821,7 +857,7 @@ def resolve_fit_mode(raw_fit_mode):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="hyprpaper-randomizer v3 — multi-cache wallpaper selector",
+        description="hyprpaper-randomizer v4 — multi-cache wallpaper selector",
     )
 
     # Cache management
@@ -865,6 +901,8 @@ def parse_args():
                         help="apply one randomly selected wallpaper per monitor")
     parser.add_argument("--fit-mode", metavar="MODE",
                         help="change wallpaper fit mode (contain|cover|tile|fill)")
+    parser.add_argument("--use-vertical", action="store_true",
+                        help="when monitor transform is vertical (1/3), select portrait images instead")
 
     if argcomplete is not None:
         argcomplete.autocomplete(parser)
@@ -903,7 +941,9 @@ def main():
         return
 
     if args.cache_switch:
-        cmd_cache_switch(args.cache_switch, light=args.light, dark=args.dark)
+        fit_mode = resolve_fit_mode(args.fit_mode)
+        cmd_cache_switch(args.cache_switch, light=args.light, dark=args.dark, fit_mode=fit_mode, multi=args.multi,
+                         use_vertical=args.use_vertical)
         return
 
     if args.cache_delete:
@@ -915,12 +955,14 @@ def main():
         return
 
     if args.cache_cycle:
-        cmd_cache_cycle(light=args.light, dark=args.dark)
+        fit_mode = resolve_fit_mode(args.fit_mode)
+        cmd_cache_cycle(light=args.light, dark=args.dark, fit_mode=fit_mode, multi=args.multi,
+                        use_vertical=args.use_vertical)
         return
 
     fit_mode = resolve_fit_mode(args.fit_mode)
 
-    cmd_run(light=args.light, dark=args.dark, fit_mode=fit_mode, multi=args.multi)
+    cmd_run(light=args.light, dark=args.dark, fit_mode=fit_mode, multi=args.multi, use_vertical=args.use_vertical)
 
 
 if __name__ == "__main__":
