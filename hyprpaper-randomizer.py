@@ -159,9 +159,9 @@ def clear_history():
     HISTFILE.write_text("")
 
 
-def append_history(path: Path):
+def append_history(path: Path, monitor: str, fit: str):
     history = load_history()
-    history.append(str(path))
+    history.append(f"{monitor} : {fit} : {str(path)}")
     history = history[-MAXHIST:]
     write_history(history)
 
@@ -624,16 +624,8 @@ def cmd_cache_switch(name: str, light: bool = False, dark: bool = False):
         print(f"Cache '{name}' is empty — running update...")
         run_cache_update(name)
 
-    choice = choose_wallpaper(name, light=light, dark=dark)
-    if choice is None:
-        msg = f"Cache '{name}' has no acceptable wallpapers."
-        print(msg)
-        notify(msg)
-        sys.exit(1)
-
-    apply_wallpaper(choice)
-    append_history(choice)
-    print(f"Switched to cache '{name}'. Applied: {choice}")
+    cmd_run(light, dark)
+    print(f"Switched to cache '{name}'.")
     notify(f"Switched to cache '{name}'.")
 
 
@@ -716,16 +708,19 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
         notify(msg)
         sys.exit(1)
 
-    if multi:
-        monitors = get_monitor_names()
-        if not monitors:
-            msg = "Unable to discover monitors for --multi (hyprctl monitors -j)."
-            print(msg)
-            notify(msg)
-            sys.exit(1)
+    # If --multi is used, hyprpaper no longer allows empty mon fallback
+    # so we must explicitly set the wallpaper to the monitor. Rather than
+    # track whether --multi was used, just set with monitor every time.
+    monitors = get_monitor_names()
+    if not monitors:
+        msg = "Unable to discover monitors (hyprctl monitors -j)."
+        print(msg)
+        notify(msg)
+        sys.exit(1)
 
-        applied = []
-        for monitor in monitors:
+    applied = []
+    for monitor in monitors:
+        if multi:
             choice = choose_wallpaper(name, light=light, dark=dark)
             if choice is None:
                 msg = f"No acceptable wallpapers in cache '{name}'. Try --cache-update {name}."
@@ -733,24 +728,21 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
                 notify(msg)
                 sys.exit(1)
             apply_wallpaper_to_monitor(choice, monitor, fit_mode=fit_mode)
-            append_history(choice)
+            append_history(choice, monitor, fit_mode)
+            applied.append((monitor, choice))
+        else:
+            choice = choose_wallpaper(name, light=light, dark=dark)
+            if choice is None:
+                msg = f"No acceptable wallpapers in cache '{name}'. Try --cache-update {name}."
+                print(msg)
+                notify(msg)
+                sys.exit(1)
+            apply_wallpaper_to_monitor(choice, monitor, fit_mode=fit_mode)
+            append_history(choice, monitor, fit_mode)
             applied.append((monitor, choice))
 
-        for monitor, choice in applied:
-            print(f"Applied wallpaper on {monitor}: {choice}")
-        return
-
-    choice = choose_wallpaper(name, light=light, dark=dark)
-    if choice is None:
-        msg = f"No acceptable wallpapers in cache '{name}'. Try --cache-update {name}."
-        print(msg)
-        notify(msg)
-        sys.exit(1)
-
-    apply_wallpaper(choice, fit_mode=fit_mode)
-    append_history(choice)
-    print(f"Applied wallpaper: {choice}")
-
+    for monitor, choice in applied:
+        print(f"Applied wallpaper on {monitor}: {choice}")
 
 # ---------------------------------------------------------------------------
 # --back
@@ -758,15 +750,46 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
 
 def cmd_back():
     history = load_history()
-    if len(history) < 2:
+    monitors = get_monitor_names()
+    if not monitors:
+        msg = "Unable to discover monitors (hyprctl monitors -j)."
+        print(msg)
+        notify(msg)
+        sys.exit(1)
+
+    num_monitors = len(monitors)
+    if len(history) < num_monitors or len(history) < 2:
         print("No previous wallpaper in history.")
         notify("No previous wallpaper in history.")
         sys.exit(1)
-    prev = history[-2]
-    write_history(history[:-1])
-    apply_wallpaper(Path(prev))
-    print(f"Reverted to previous wallpaper: {prev}")
 
+    prev_history = history[:-num_monitors] # negative slices are 1-indexed
+
+    targets = {}
+    for ln in reversed(prev_history):
+        if " : " not in ln: # mon : fit : /path/
+            continue
+        parts = ln.split(" : ", 2)
+        if len(parts) < 3:
+            continue
+        monitor_name, fit, path = parts
+
+        if monitor_name in monitors and monitor_name not in targets:
+            targets[monitor_name] = {
+                "path": path,
+                "fit": fit
+            }
+
+        if len(targets) == len(monitors):
+            break
+
+    for monitor, data in targets.items():
+        prev_path = data["path"]
+        fit = data["fit"]
+        apply_wallpaper_to_monitor(Path(prev_path), monitor, fit)
+        print(f"Reverted {monitor} to {fit} previous wallpaper: {prev_path}")
+
+    write_history(prev_history)
 
 # ---------------------------------------------------------------------------
 # Tab-completion helpers
