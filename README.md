@@ -1,6 +1,7 @@
 # hyprpaper randomizer
 Python script to randomly change my hyprpaper wallpaper from all files in a directory, selecting by monitor orientation when requested.
-Implements:
+
+## Implements:
 - caching to avoid checking image data every time
 - allows for multiple caches and multiple source dirs per cache
 - history to go back up to 50 wallpapers
@@ -22,7 +23,7 @@ Implements:
 - `--cache-update NAME` : update and prune an existing cache
 - `--cache-switch NAME` : switch to a cache, clear history, and apply a wallpaper
 - `--cache-delete NAME` : delete a cache (or `all` to delete every cache)
-- `--cache-cycle` : cycle (switch) through existing caches
+- `--cache-cycle` : cycle (switch) through existing caches (compatible with normal run args)
 
 ### Normal Run
 - `--back` : rewind to previous wallpaper using history
