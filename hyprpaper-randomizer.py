@@ -14,6 +14,7 @@ Cache management:
 
 Normal usage (requires an active cache):
   (no args)   — pick and apply next wallpaper
+  --multi     — apply one randomly selected wallpaper per monitor
   --back      — rewind to previous wallpaper using global history
   --light     — prefer light wallpapers (luminance > midpoint)
   --dark      — prefer dark wallpapers (luminance < midpoint)
@@ -485,6 +486,39 @@ def apply_wallpaper(p: Path, fit_mode: str = VALID_FIT_MODES[0]):
     subprocess.run(["hyprctl", "hyprpaper", "wallpaper", f",{str(p)},{fit_mode}"])
 
 
+def apply_wallpaper_to_monitor(p: Path, monitor: str, fit_mode: str = VALID_FIT_MODES[0]):
+    subprocess.run(["hyprctl", "hyprpaper", "wallpaper", f"{monitor},{str(p)},{fit_mode}"])
+
+
+def get_monitor_names():
+    try:
+        result = subprocess.run(
+            ["hyprctl", "monitors", "-j"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return []
+
+    try:
+        monitors = json.loads(result.stdout)
+    except Exception:
+        return []
+
+    if not isinstance(monitors, list):
+        return []
+
+    names = []
+    for monitor in monitors:
+        if not isinstance(monitor, dict):
+            continue
+        name = monitor.get("name")
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
 # ---------------------------------------------------------------------------
 # --cache-list
 # ---------------------------------------------------------------------------
@@ -668,7 +702,7 @@ def cmd_cache_cycle(light: bool = False, dark: bool = False):
 # Normal run
 # ---------------------------------------------------------------------------
 
-def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_MODES[0]):
+def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_MODES[0], multi: bool = False):
     name = get_active_cache_name()
     if name is None:
         msg = "No active cache. Use --cache-init NAME --wallpaper-dir PATH --max-depth INT"
@@ -681,6 +715,30 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
         print(msg)
         notify(msg)
         sys.exit(1)
+
+    if multi:
+        monitors = get_monitor_names()
+        if not monitors:
+            msg = "Unable to discover monitors for --multi (hyprctl monitors -j)."
+            print(msg)
+            notify(msg)
+            sys.exit(1)
+
+        applied = []
+        for monitor in monitors:
+            choice = choose_wallpaper(name, light=light, dark=dark)
+            if choice is None:
+                msg = f"No acceptable wallpapers in cache '{name}'. Try --cache-update {name}."
+                print(msg)
+                notify(msg)
+                sys.exit(1)
+            apply_wallpaper_to_monitor(choice, monitor, fit_mode=fit_mode)
+            append_history(choice)
+            applied.append((monitor, choice))
+
+        for monitor, choice in applied:
+            print(f"Applied wallpaper on {monitor}: {choice}")
+        return
 
     choice = choose_wallpaper(name, light=light, dark=dark)
     if choice is None:
@@ -780,6 +838,8 @@ def parse_args():
                            help="select only light wallpapers (luminance > midpoint)")
     lum_group.add_argument("--dark", action="store_true",
                            help="select only dark wallpapers (luminance < midpoint)")
+    parser.add_argument("--multi", action="store_true",
+                        help="apply one randomly selected wallpaper per monitor")
     parser.add_argument("--fit-mode", metavar="MODE",
                         help="change wallpaper fit mode (contain|cover|tile|fill)")
 
@@ -837,7 +897,7 @@ def main():
 
     fit_mode = resolve_fit_mode(args.fit_mode)
 
-    cmd_run(light=args.light, dark=args.dark, fit_mode=fit_mode)
+    cmd_run(light=args.light, dark=args.dark, fit_mode=fit_mode, multi=args.multi)
 
 
 if __name__ == "__main__":
