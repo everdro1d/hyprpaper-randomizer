@@ -1,5 +1,5 @@
 # hyprpaper randomizer
-Python script to randomly change my hyprpaper wallpaper to a landscape (ish) image from all files in a directory.
+Python script to randomly change my hyprpaper wallpaper from all files in a directory, selecting by monitor orientation when requested.
 Implements:
 - caching to avoid checking image data every time, checks -> caches match or not
 - checks cache first, changes selected image if not match otherwise change wallpaper to selected image
@@ -24,6 +24,7 @@ Implements:
 - `--dark` : select only dark wallpapers (luminance < midpoint)
 - `--multi` : apply one randomly selected wallpaper per monitor
 - `--fit-mode MODE` : change wallpaper fit mode (`contain`, `cover`, `tile`, or `fill`; default: `contain`)
+- `--use-vertical` : when monitor transform is vertical (1 or 3), select portrait images; otherwise use horizontal images (0 or 2)
 
 ## Tab completion
 
