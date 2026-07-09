@@ -762,6 +762,11 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
                 print(msg)
                 notify(msg)
                 sys.exit(1)
+            # try again if img already chosen, but not more than once to avoid
+            # hanging in a loop when matches < len(monitors).
+            if any(choice in entry for entry in applied):
+                choice = choose_wallpaper(name, light=light, dark=dark, is_horizontal=use_horizontal)
+
             apply_wallpaper_to_monitor(choice, monitor, fit_mode=fit_mode)
             append_history(choice, monitor, fit_mode)
             applied.append((monitor, choice))
