@@ -584,7 +584,7 @@ def cmd_cache_list():
 def cmd_cache_init(name: str, sources: list, max_depth: int, populate: bool):
     meta = {
         "name": name,
-        "sources": [str(Path(s).expanduser()) for s in sources],
+        "sources": [str(Path(s).expanduser().resolve()) for s in sources],
         "max_depth": max_depth,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
