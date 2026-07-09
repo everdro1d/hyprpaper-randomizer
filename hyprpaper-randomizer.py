@@ -753,7 +753,7 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
         transform = monitor_data.get("transform", 0)
         use_horizontal = True
         if use_vertical:
-            use_horizontal = transform in (0, 2)
+            use_horizontal = transform in (0, 2, 4, 6)
         if multi:
             choice = choose_wallpaper(name, light=light, dark=dark, is_horizontal=use_horizontal)
             if choice is None:
@@ -907,7 +907,7 @@ def parse_args():
     parser.add_argument("--fit-mode", metavar="MODE",
                         help="change wallpaper fit mode (contain|cover|tile|fill)")
     parser.add_argument("--use-vertical", action="store_true",
-                        help="when monitor transform is vertical (1/3), select portrait images instead")
+                        help="when monitor transform is vertical (1/3/5/7), select portrait images instead")
 
     if argcomplete is not None:
         argcomplete.autocomplete(parser)
