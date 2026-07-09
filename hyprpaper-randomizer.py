@@ -452,7 +452,13 @@ def run_cache_update(name: str):
 def choose_wallpaper(name: str, light: bool = False, dark: bool = False, is_horizontal: bool = True):
     db_path = cache_db_path(name)
     conn = open_db(db_path)
-    history_set = set(load_history())
+    history_paths = []
+    for ln in load_history():
+        parts = ln.split(" : ", 2)
+        if len(parts) < 3:
+            continue
+        history_paths.append(parts[2]) # gets the path
+    history_set = set(history_paths)
 
     def _query(ignore_history: bool):
         if light:
