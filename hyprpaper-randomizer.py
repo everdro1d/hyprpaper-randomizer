@@ -60,6 +60,7 @@ HISTFILE = APPDIR / "history"
 CACHEDIR = APPDIR / "caches"
 DBDIR = APPDIR / "db"
 
+ # MAXHIST is per monitor (i.e. 4 monitors: MAXHIST = 50 * 4)
 MAXHIST = 50
 THROTTLE = Path("/tmp/hyprpaper-randomizer-throttle")
 EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -160,10 +161,10 @@ def clear_history():
     HISTFILE.write_text("")
 
 
-def append_history(path: Path, monitor: str, fit: str):
+def append_history(path: Path, monitor: str, fit: str, num_monitors: int = 1):
     history = load_history()
     history.append(f"{monitor} : {fit} : {str(path)}")
-    history = history[-MAXHIST:]
+    history = history[-(MAXHIST * num_monitors):]
     write_history(history)
 
 
@@ -753,6 +754,8 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
         notify(msg)
         sys.exit(1)
 
+    num_monitors = len(monitors)
+
     applied = []
     for monitor_data in monitors:
         monitor = monitor_data["name"]
@@ -774,7 +777,7 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
                 choice = choose_wallpaper(name, light=light, dark=dark, is_horizontal=use_horizontal)
 
             apply_wallpaper_to_monitor(choice, monitor, fit_mode=fit_mode)
-            append_history(choice, monitor, fit_mode)
+            append_history(choice, monitor, fit_mode, num_monitors)
             applied.append((monitor, choice))
         else:
             choice = choose_wallpaper(name, light=light, dark=dark, is_horizontal=use_horizontal)
@@ -785,7 +788,7 @@ def cmd_run(light: bool = False, dark: bool = False, fit_mode: str = VALID_FIT_M
                 notify(msg)
                 sys.exit(1)
             apply_wallpaper_to_monitor(choice, monitor, fit_mode=fit_mode)
-            append_history(choice, monitor, fit_mode)
+            append_history(choice, monitor, fit_mode, num_monitors)
             applied.append((monitor, choice))
 
     for monitor, choice in applied:
